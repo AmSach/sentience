@@ -1,4 +1,14 @@
-Sentience.exe
+__pycache__/
+*.pyc
+*.pyo
+*.exe
+*.dll
 dist/
 build/
-*.exe
+sentience_env/
+.env
+*.db
+*.log
+.pytest_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,78 @@
+name: Build Windows Exe
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pyside6 flask flask-cors anthropic openai groq python-dotenv pyyaml playwright pypdf reportlab python-docx openpyxl lz4 requests
+      
+      - name: Install Playwright browsers
+        run: playwright install chromium
+      
+      - name: Build executable
+        run: |
+          pyinstaller sentience_app.py --onefile --windowed --name Sentience --add-data "ui;ui" --hidden-import=anthropic --hidden-import=openai --hidden-import=groq --hidden-import=flask --hidden-import=pyside6 --hidden-import=playwright --collect-all playwright --collect-all pyside6 --noconfirm
+      
+      - name: Create installer
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/Sentience.exe,install-windows.bat,run.bat,run-ui.bat,requirements.txt,README.md,.env.example -DestinationPath Sentience-Windows-Setup.zip
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sentience-Windows
+          path: dist/Sentience.exe
+      
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sentience-Setup-Zip
+          path: Sentience-Windows-Setup.zip
+      
+      - name: Create release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v2.1
+          name: Sentience v2.1 - Windows Native Build
+          files: |
+            dist/Sentience.exe
+            Sentience-Windows-Setup.zip
+          body: |
+            ## Sentience v2.1 - Proper Windows Build
+            
+            Built natively on Windows via GitHub Actions.
+            
+            ### Download
+            - `Sentience.exe` - Direct executable
+            - `Sentience-Windows-Setup.zip` - Full package with installer
+            
+            ### Installation
+            1. Download and extract `Sentience-Windows-Setup.zip`
+            2. Run `install-windows.bat` as Administrator
+            3. Launch via Desktop shortcut or `run.bat`
+            
+            ### Features
+            - 100+ tools (filesystem, code, web, data, email, calendar, social, cloud, remote, media, security, system, browser, search, form, analysis, research)
+            - BYOK support (OpenAI, Anthropic, Groq, local models)
+            - Local hosting, automation, skills system
+            - Self-improving agent capabilities
+            - Obsidian-like memory with compression
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

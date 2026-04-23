@@ -1,1 +1,15 @@
-flask flask-cors anthropic openai groq python-dotenv lz4 playwright pyyaml
+flask
+flask-cors
+anthropic
+openai
+groq
+python-dotenv
+pyyaml
+pypdf
+reportlab
+python-docx
+openpyxl
+lz4
+requests
+pyside6
+playwright

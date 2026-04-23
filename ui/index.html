@@ -1,98 +1,134 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sentience</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui;background:#0a0a0f;color:#e0e0e0;height:100vh;overflow:hidden}
-#header{background:#12121a;border-bottom:1px solid #222;padding:12px 20px;display:flex;gap:12px;align-items:center}
-#header h1{font-size:18px;color:#7c6aef;font-weight:600}
-#header .badge{background:#222;padding:4px 10px;border-radius:12px;font-size:11px;color:#888}
-#sidebar{width:220px;background:#0f0f14;border-right:1px solid #1a1a24;padding:12px;height:calc(100vh - 52px);overflow-y:auto;float:left}
-#sidebar h3{font-size:11px;text-transform:uppercase;color:#444;margin:16px 0 8px}
-.conv-item{padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#999;margin-bottom:2px}
-.conv-item:hover,.conv-item.active{background:#1a1a24;color:#ccc}
-#main{flex:1;display:flex;flex-direction:column;height:calc(100vh - 52px)}
-#chat{flex:1;overflow-y:auto;padding:20px;max-width:800px;margin:0 auto;width:100%}
-.msg{margin-bottom:16px;display:flex;flex-direction:column}
-.msg.user{align-items:flex-end}
-.msg.assistant{align-items:flex-start}
-.msg .bubble{max-width:80%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.5}
-.msg.user .bubble{background:#5b4de2;color:#fff;border-bottom-right-radius:4px}
-.msg.assistant .bubble{background:#16161f;color:#ddd;border-bottom-left-radius:4px}
-.msg .toolCalls{margin:8px 0;background:#12121a;border-radius:8px;padding:10px;font-size:12px;border:1px solid #222}
-.msg .toolCalls .tool_name{color:#7c6aef;font-weight:500}
-.msg .toolCalls .tool_result{max-height:200px;overflow:auto;margin-top:6px;color:#888}
-#inputArea{background:#0f0f14;border-top:1px solid #1a1a24;padding:16px;display:flex;gap:10px;max-width:800px;margin:0 auto;width:100%}
-#inputArea input{flex:1;background:#16161f;border:1px solid #222;border-radius:8px;padding:10px 14px;color:#ddd;font-size:14px}
-#inputArea input:focus{outline:none;border-color:#5b4de2}
-#inputArea button{background:#5b4de2;border:none;border-radius:8px;padding:8px 20px;color:#fff;font-weight:500;cursor:pointer}
-#inputArea button:hover{background:#6b5ce7}
-.status{position:fixed;bottom:8px;right:12px;font-size:11px;color:#333}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentience - Local AI Computer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e; color: #eee; height: 100vh; display: flex;
+        }
+        .sidebar { width: 250px; background: #16213e; padding: 20px; display: flex; flex-direction: column; }
+        .sidebar h2 { margin-bottom: 20px; color: #4cc9f0; }
+        .conv-list { flex: 1; overflow-y: auto; }
+        .conv-item { padding: 10px; cursor: pointer; border-radius: 5px; margin-bottom: 5px; }
+        .conv-item:hover { background: #1a1a2e; }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .header { padding: 15px 20px; background: #16213e; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { color: #4cc9f0; }
+        .chat-container { flex: 1; overflow-y: auto; padding: 20px; }
+        .message { margin-bottom: 15px; padding: 15px; border-radius: 10px; max-width: 80%; }
+        .user { background: #16213e; margin-left: auto; }
+        .assistant { background: #0f3460; }
+        .input-area { padding: 20px; background: #16213e; display: flex; gap: 10px; }
+        .input-area input { flex: 1; padding: 12px 15px; border: none; border-radius: 5px; background: #1a1a2e; color: #eee; font-size: 14px; }
+        .input-area button { padding: 12px 20px; background: #4cc9f0; color: #1a1a2e; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .input-area button:hover { background: #3aa8d8; }
+        .tools-btn { background: #e94560 !important; }
+        .status { font-size: 12px; color: #666; margin-top: 10px; }
+    </style>
 </head>
 <body>
-<div id="header">
-  <h1>⬡ Sentience</h1>
-  <span class="badge">v1.0 | BYOK | Local</span>
-</div>
-<div id="sidebar">
-  <h3>Chats</h3>
-  <div id="convList"></div>
-</div>
-<div id="main">
-  <div id="chat"></div>
-  <div id="inputArea">
-    <input id="msgInput" placeholder="Message Sentience..." autofocus>
-    <button onclick="sendMsg()">Send</button>
-  </div>
-</div>
-<script>
-const API = "http://localhost:3132";
-let convId = localStorage.convId || (localStorage.convId = crypto.randomUUID());
-let history = [];
-
-async function loadConv() {
-  const res = await fetch(\`\${API}/api/conversations\`);
-  const convs = await res.json();
-  document.getElementById("convList").innerHTML = convs.map(c =>
-    \`<div class="conv-item \${c.id===convId?'active':''}" onclick="switchConv('\${c.id}')">\${c.title||'New Chat'}</div>\`
-  ).join("");
-}
-async function sendMsg() {
-  const inp = document.getElementById("msgInput");
-  const text = inp.value.trim(); if(!text) return;
-  history.push({role:"user", content:text});
-  inp.value = "";
-  addBubble("user", text);
-  const res = await fetch(\`\${API}/api/chat\`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({message:text, conversation_id:convId})
-  });
-  const data = await res.json();
-  history.push({role:"assistant", content:data.response});
-  addBubble("assistant", data.response, data.tool_calls);
-  loadConv();
-}
-function addBubble(role, content, toolCalls) {
-  const chat = document.getElementById("chat");
-  const div = document.createElement("div");
-  div.className=\`msg \${role}\`;
-  let html = \`<div class="bubble">\${escapeHtml(content)}</div>\`;
-  if (toolCalls && toolCalls.length) {
-    html += \`<div class="toolCalls">\${toolCalls.map(t =>
-      \`<div><span class="tool_name">\${t.tool_name}</span>: \${t.input?JSON.parse(t.input):''}</div>\`
-    ).join("")}</div>\`;
-  }
-  div.innerHTML = html;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-}
-function escapeHtml(s) { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-document.getElementById("msgInput").addEventListener("keydown", e=>{if(e.key==="Enter")sendMsg()});
-loadConv();
-</script>
+    <div class="sidebar">
+        <h2>Conversations</h2>
+        <div class="conv-list" id="convList"></div>
+        <button onclick="newConversation()">+ New Chat</button>
+    </div>
+    <div class="main">
+        <div class="header">
+            <h1>Sentience</h1>
+            <div>
+                <button onclick="showSettings()">Settings</button>
+                <button onclick="showTools()" class="tools-btn">Tools</button>
+            </div>
+        </div>
+        <div class="chat-container" id="chat"></div>
+        <div class="input-area">
+            <input type="text" id="input" placeholder="Type your message..." onkeypress="if(event.key==='Enter')send()">
+            <select id="provider">
+                <option value="">Auto</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="groq">Groq</option>
+            </select>
+            <button onclick="send()">Send</button>
+        </div>
+    </div>
+    <script>
+        const API = 'http://127.0.0.1:3131/api';
+        let currentConv = null;
+        
+        async function loadConversations() {
+            const res = await fetch(`${API}/conversations`);
+            const data = await res.json();
+            const list = document.getElementById('convList');
+            list.innerHTML = data.conversations.map(c => 
+                `<div class="conv-item" onclick="loadConversation('${c.id}')">${c.title || 'New Chat'}</div>`
+            ).join('');
+        }
+        
+        async function loadConversation(id) {
+            currentConv = id;
+            const res = await fetch(`${API}/conversations/${id}/messages`);
+            const data = await res.json();
+            const chat = document.getElementById('chat');
+            chat.innerHTML = data.messages.map(m => 
+                `<div class="message ${m.role}">${escapeHtml(m.content)}</div>`
+            ).join('');
+            chat.scrollTop = chat.scrollHeight;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        async function newConversation() {
+            currentConv = 'conv-' + Date.now();
+            document.getElementById('chat').innerHTML = '';
+            loadConversations();
+        }
+        
+        async function send() {
+            const input = document.getElementById('input');
+            const provider = document.getElementById('provider').value;
+            const text = input.value.trim();
+            if (!text) return;
+            
+            const chat = document.getElementById('chat');
+            chat.innerHTML += `<div class="message user">${escapeHtml(text)}</div>`;
+            input.value = '';
+            
+            try {
+                const res = await fetch(`${API}/chat`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({messages: [{role: 'user', content: text}], provider})
+                });
+                const data = await res.json();
+                chat.innerHTML += `<div class="message assistant">${escapeHtml(data.response)}</div>`;
+                chat.scrollTop = chat.scrollHeight;
+            } catch (e) {
+                chat.innerHTML += `<div class="message assistant" style="background:#e94560">Error: ${e.message}</div>`;
+            }
+        }
+        
+        async function showTools() {
+            const res = await fetch(`${API}/tools`);
+            const data = await res.json();
+            alert('Available Tools:\n' + data.tools.map(t => `  ${t.name}: ${t.description}`).join('\n'));
+        }
+        
+        function showSettings() {
+            alert('Settings:\n\n1. Go to Settings > BYOK Keys\n2. Add your API keys:\n   - OpenAI (GPT-4)\n   - Anthropic (Claude)\n   - Groq (Llama)\n\nKeys are stored locally in ~/.sentience/');
+        }
+        
+        // Initialize
+        loadConversations();
+        newConversation();
+    </script>
 </body>
 </html>
