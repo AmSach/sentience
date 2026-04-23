@@ -1,0 +1,52 @@
+[
+  {
+    "team": "gui",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "lsp",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "skills",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "integrations",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "hosting",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "automations",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "browser",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "forms",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "context",
+    "status": "error",
+    "error": ""
+  },
+  {
+    "team": "memory",
+    "status": "error",
+    "error": ""
+  }
+]
