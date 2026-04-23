@@ -1,189 +1,338 @@
 #!/usr/bin/env python3
-"""Sentience Server - Flask REST API + Web UI."""
+"""Sentience Server - Flask REST API."""
 import os, sys, json
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from werkzeug.serving import run_simple
+
+# Import all modules
+from storage import init_schema, get_db, create_conversation, list_conversations, get_conversation, get_messages, save_message, save_byok_key, get_byok_keys, set_memory, get_memory, list_memories, delete_memory, create_skill, list_skills, get_skill, update_skill, delete_skill, save_automation, get_automations, delete_automation, update_automation, get_automation_history
+from agent.tools import get_registry, ToolContext
+from agent.engine import SentienceAgent
+from skills.registry import SkillRegistry, list_all_skills, get_skill_by_name, execute_skill, install_skill_from_url, create_custom_skill
+from skills.registry import SKILL_DIR
+from memory.vault import SentienceVault
+from memory.compression import SentienceCompression
+from memory.graph import SentienceGraph
+from automation import get_automation
+from hosting import get_host
+from remote import RemoteControl, get_remote
+from email.listener import EmailListener, configure_gmail, get_listener
+from cloud import CloudStorage, get_cloud
+from integrations.gmail_client import GmailClient
+from integrations.notion_client import NotionClient
+from integrations.calendar_client import CalendarClient
+from integrations.spotify_client import SpotifyClient
 
 app = Flask(__name__, static_folder="ui", static_url_path="")
 CORS(app)
 
-# Import all modules
-from storage import init_schema, get_db, create_conversation, list_conversations, get_messages, save_message
-from storage import get_byok, save_byok, list_byok, get_memory, set_memory, list_memory
-from storage import save_automation, list_automations, save_kv, get_kv
-from agent import SentienceAgent, BYOKProvider
-from agent.provider import PROVIDERS
-from memory.vault import SentienceVault
-from memory.compression import SentienceCompression
-from memory.graph import SentienceGraph
-from integrations import (GmailIntegration, NotionIntegration, SpotifyIntegration,
-                          CalendarIntegration, DriveIntegration, DropboxIntegration, LinearIntegration)
+# Init DB
+init_schema(get_db())
 
-from storage import init_schema as init_db; init_db(get_db())
-
-_active_agent = None
-_vault = None
-_compression = None
-_graph = None
+# Global instances
+_agent = None
+_vault = SentienceVault()
+_compression = SentienceCompression()
+_graph = SentienceGraph()
+_automation = get_automation()
+_host = get_host()
+_automation_started = False
 
 def get_agent():
-    global _active_agent, _vault, _compression, _graph
-    from storage.db import get_db
-    db = get_db()
-    
-    provider_name = "anthropic"
-    for p in list_byok():
-        provider_name = p; break
-    
-    byok = get_byok(provider_name)
-    if not byok or not byok[1]:
-        return None, "No API key configured. Run: python3 sentience.py config add anthropic YOUR_KEY"
-    
-    provider = BYOKProvider(provider=provider_name, api_key=byok[1])
-    agent = SentienceAgent(provider)
-    
-    from storage.db import get_db as gdb
-    _compression = SentienceCompression()
-    _vault = SentienceVault(storage=None)
-    return agent, None
+    global _agent
+    if _agent is None:
+        api_keys = {p["provider"]: p["api_key"] for p in get_byok_keys()}
+        _agent = SentienceAgent(api_keys, vault=_vault, compression=_compression)
+    return _agent
+
+# === API ROUTES ===
 
 @app.route("/api/health")
-def health(): return jsonify({"status": "ok", "tools": len(__import__("agent.tools", fromlist=["get_registry"]).get_registry().list_tools())})
+def health():
+    return jsonify({"status": "ok", "modules": {"vault": bool(_vault), "compression": bool(_compression), "graph": bool(_graph), "automation": _automation_started, "hosting": True, "remote": True, "email": True}})
 
-@app.route("/api/tools")
-def tools_route():
-    from agent.tools import get_registry
-    return jsonify({"tools": get_registry().get_schema()})
-
+# --- Conversations ---
 @app.route("/api/conversations", methods=["GET"])
-def conversations_list():
-    rows = list_conversations()
-    return jsonify({"conversations": [{"id": r[0], "title": r[1], "updated_at": r[3]} for r in rows]})
+def api_list_conversations():
+    return jsonify({"conversations": list_conversations()})
 
 @app.route("/api/conversations", methods=["POST"])
-def conversations_create():
-    import uuid
-    data = request.json or {}
-    cid = str(uuid.uuid4())[:16]
-    create_conversation(cid, data.get("title", "New Chat"))
-    return jsonify({"id": cid})
+def api_create_conversation():
+    data = request.json
+    cid = data.get("id", os.urandom(8).hex())
+    title = data.get("title", "New Chat")
+    create_conversation(cid, title)
+    return jsonify({"id": cid, "title": title})
 
-@app.route("/api/conversations/<conv_id>/messages", methods=["GET"])
-def messages_get(conv_id):
-    rows = get_messages(conv_id)
-    return jsonify({"messages": [{"id": r[0], "role": r[2], "content": r[3]} for r in rows]})
+@app.route("/api/conversations/<cid>/messages")
+def api_get_messages(cid):
+    limit = request.args.get("limit", 100, type=int)
+    return jsonify({"messages": get_messages(cid, limit)})
 
+# --- Chat ---
 @app.route("/api/chat", methods=["POST"])
-def chat():
-    data = request.json or {}
-    message = data.get("message", "")
-    conv_id = data.get("conversation_id") or "default"
-    
-    agent, err = get_agent()
-    if err: return jsonify({"error": err}), 400
-    
-    result, meta = agent.chat(message, conv_id)
-    return jsonify({"content": result, "conversation_id": meta["conversation_id"], "tool_calls": meta.get("tool_calls", 0)})
+def api_chat():
+    data = request.json
+    cid = data.get("conversation_id", "default")
+    msg = data.get("message", "")
+    model = data.get("model", None)
+    stream = data.get("stream", False)
 
-@app.route("/api/byok", methods=["GET"])
-def byok_list(): return jsonify({"providers": list_byok()})
+    # Save user message
+    save_message({"id": os.urandom(8).hex(), "conversation_id": cid, "role": "user", "content": msg})
 
-@app.route("/api/byok/<provider>", methods=["POST"])
-def byok_add(provider):
-    data = request.json or {}
-    api_key = data.get("api_key", "")
-    models = data.get("models")
-    base_url = data.get("base_url")
-    if not api_key: return jsonify({"error": "api_key required"}), 400
-    save_byok(provider, api_key, models, base_url)
-    return jsonify({"success": True, "provider": provider})
+    # Create conversation if needed
+    if not get_conversation(cid):
+        create_conversation(cid, msg[:50])
 
-@app.route("/api/byok/providers", methods=["GET"])
-def byok_providers(): return jsonify({"providers": PROVIDERS})
+    # Run agent
+    agent = get_agent()
+    response = agent.run(msg, conversation_id=cid, model=model)
 
-@app.route("/api/memory", methods=["GET"])
-def memory_list(): return jsonify({"memory": [{"key": r[0], "value": r[1]} for r in list_memory()]})
+    # Save assistant response
+    save_message({"id": os.urandom(8).hex(), "conversation_id": cid, "role": "assistant", "content": response})
+
+    return jsonify({"response": response, "conversation_id": cid})
+
+# --- Tools ---
+@app.route("/api/tools")
+def api_tools():
+    reg = get_registry()
+    tools = []
+    for name, fn in reg._tools.items():
+        tools.append({"name": name, "description": fn.__doc__ or "", "category": getattr(fn, "_category", "general")})
+    return jsonify({"tools": tools, "count": len(tools)})
+
+@app.route("/api/tools/execute", methods=["POST"])
+def api_execute_tool():
+    data = request.json
+    name = data.get("name")
+    args = data.get("args", {})
+    ctx = ToolContext(workspace="/home/workspace")
+    reg = get_registry()
+    try:
+        result = reg.call(name, args, ctx)
+        return jsonify({"result": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# --- Skills ---
+@app.route("/api/skills")
+def api_skills():
+    return jsonify({"skills": list_all_skills()})
+
+@app.route("/api/skills/<name>", methods=["GET"])
+def api_get_skill(name):
+    s = get_skill_by_name(name)
+    if s: return jsonify(s)
+    return jsonify({"error": "skill not found"}), 404
+
+@app.route("/api/skills/execute", methods=["POST"])
+def api_execute_skill():
+    data = request.json
+    name = data.get("name")
+    args = data.get("args", {})
+    ctx = ToolContext(workspace="/home/workspace")
+    try:
+        result = execute_skill(name, args, ctx)
+        return jsonify({"result": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/skills", methods=["POST"])
+def api_create_skill():
+    data = request.json
+    skill = create_custom_skill(data.get("name"), data.get("description"), data.get("code"), data.get("category", "custom"))
+    return jsonify({"created": skill})
+
+@app.route("/api/skills/<name>", methods=["DELETE"])
+def api_delete_skill(name):
+    delete_skill(name)
+    return jsonify({"deleted": name})
+
+# --- Memory ---
+@app.route("/api/memory")
+def api_memory():
+    return jsonify({"memories": list_memories()})
+
+@app.route("/api/memory", methods=["POST"])
+def api_set_memory():
+    data = request.json
+    set_memory(data.get("key"), data.get("value"))
+    return jsonify({"stored": True})
 
 @app.route("/api/memory/<key>", methods=["GET"])
-def memory_get(key): return jsonify({"value": get_memory(key)})
+def api_get_memory(key):
+    return jsonify({"key": key, "value": get_memory(key)})
 
-@app.route("/api/memory/<key>", methods=["POST"])
-def memory_set(key): set_memory(key, request.json.get("value","")); return jsonify({"success": True})
+@app.route("/api/memory/<key>", methods=["DELETE"])
+def api_delete_memory(key):
+    delete_memory(key)
+    return jsonify({"deleted": key})
 
-@app.route("/api/vault/search", methods=["GET"])
-def vault_search():
-    from storage import search_vault
-    q = request.args.get("q", "")
-    results = search_vault(q)
-    return jsonify({"results": [{"id": r[0], "key": r[1], "content": r[2][:200]} for r in results]})
+@app.route("/api/vault/compress", methods=["POST"])
+def api_vault_compress():
+    data = request.json
+    text = data.get("text", "")
+    return jsonify({"compressed": _compression.compress(text), "original_size": len(text)})
 
-@app.route("/api/vault/create", methods=["POST"])
-def vault_create():
-    data = request.json or {}
-    from memory.vault import SentienceVault
-    vault = SentienceVault(storage=None)
-    entry = vault.create_note(data.get("title",""), data.get("content",""), data.get("tags",[]))
-    return jsonify(entry)
+@app.route("/api/vault/decompress", methods=["POST"])
+def api_vault_decompress():
+    data = request.json
+    compressed = data.get("compressed", "")
+    return jsonify({"decompressed": _compression.decompress(compressed)})
 
-@app.route("/api/compress", methods=["POST"])
-def compress():
-    data = request.json or {}
-    msgs = data.get("messages", [])
-    compression = SentienceCompression()
-    compressed, stats = compression.compress(msgs)
-    return jsonify({"compressed": compressed, "stats": stats})
+@app.route("/api/graph/entities", methods=["GET"])
+def api_graph_entities():
+    return jsonify({"entities": _graph.list_entities()})
 
+@app.route("/api/graph/entities", methods=["POST"])
+def api_graph_add_entity():
+    data = request.json
+    _graph.add_entity(data.get("entity_type"), data.get("name"), data.get("properties", {}))
+    return jsonify({"added": True})
+
+# --- BYOK ---
+@app.route("/api/byok", methods=["GET"])
+def api_byok():
+    return jsonify({"providers": get_byok_keys()})
+
+@app.route("/api/byok", methods=["POST"])
+def api_byok_save():
+    data = request.json
+    save_byok_key(data.get("provider"), data.get("api_key"), data.get("models"))
+    return jsonify({"saved": True})
+
+# --- Automations ---
 @app.route("/api/automations", methods=["GET"])
-def automations_list():
-    rows = list_automations()
-    return jsonify({"automations": [{"id": r[0], "name": r[1], "rrule": r[3], "enabled": r[4]} for r in rows]})
+def api_automations():
+    return jsonify({"automations": get_automations()})
 
 @app.route("/api/automations", methods=["POST"])
-def automations_create():
-    import uuid
-    data = request.json or {}
-    aid = str(uuid.uuid4())[:16]
-    save_automation({"id": aid, "name": data.get("name",""), "instruction": data.get("instruction",""), "rrule": data.get("rrule",""), "enabled": data.get("enabled",1)})
-    return jsonify({"id": aid})
+def api_create_automation():
+    data = request.json
+    id = save_automation(data.get("name"), data.get("instruction"), data.get("rrule"), data.get("enabled", True))
+    return jsonify({"id": id})
 
-@app.route("/api/integrations/gmail/search", methods=["GET"])
-def gmail_search():
-    q = request.args.get("q", "")
-    gmail = GmailIntegration()
-    results = gmail.list_messages(q)
-    return jsonify({"messages": results})
+@app.route("/api/automations/<id>", methods=["DELETE"])
+def api_delete_automation(id):
+    delete_automation(id)
+    return jsonify({"deleted": id})
 
-@app.route("/api/integrations/gmail/send", methods=["POST"])
-def gmail_send():
-    data = request.json or {}
-    gmail = GmailIntegration()
-    result = gmail.send_email(data.get("to",""), data.get("subject",""), data.get("body",""))
+@app.route("/api/automations/<id>", methods=["PATCH"])
+def api_update_automation(id):
+    data = request.json
+    update_automation(id, data)
+    return jsonify({"updated": True})
+
+@app.route("/api/automations/history")
+def api_automation_history():
+    return jsonify({"history": get_automation_history()})
+
+# --- Hosting ---
+@app.route("/api/hosting/sites", methods=["GET"])
+def api_sites():
+    return jsonify({"sites": _host.list_sites()})
+
+@app.route("/api/hosting/sites", methods=["POST"])
+def api_create_site():
+    data = request.json
+    return jsonify(_host.create_site(data.get("name"), data.get("domain")))
+
+@app.route("/api/hosting/sites/<name>", methods=["DELETE"])
+def api_delete_site(name):
+    return jsonify(_host.delete_site(name))
+
+@app.route("/api/hosting/sites/<name>/url")
+def api_site_url(name):
+    return jsonify({"url": _host.get_public_url(name)})
+
+# --- Remote ---
+@app.route("/api/remote/connect", methods=["POST"])
+def api_remote_connect():
+    data = request.json
+    rc = get_remote()
+    result = rc.connect(data.get("host"), data.get("username"), data.get("password"), data.get("port", 22))
     return jsonify(result)
 
-@app.route("/api/integrations/notion/search", methods=["GET"])
-def notion_search():
-    q = request.args.get("q", "")
-    notion = NotionIntegration()
-    results = notion.search(q)
-    return jsonify({"results": results})
+@app.route("/api/remote/execute", methods=["POST"])
+def api_remote_execute():
+    data = request.json
+    rc = get_remote()
+    result = rc.execute(data.get("command"), data.get("timeout", 30))
+    return jsonify({"output": result})
 
-@app.route("/api/integrations/spotify/recent", methods=["GET"])
-def spotify_recent():
-    spotify = SpotifyIntegration()
-    results = spotify.get_recently_played()
-    return jsonify({"tracks": results})
+@app.route("/api/remote/sftp/upload", methods=["POST"])
+def api_remote_upload():
+    data = request.json
+    rc = get_remote()
+    result = rc.upload_file(data.get("local_path"), data.get("remote_path"))
+    return jsonify(result)
 
-@app.route("/api/settings", methods=["GET"])
-def settings_get():
-    return jsonify({"workspace": os.path.expanduser("~/sentience_workspace"), "db": os.path.expanduser("~/.sentience")})
+# --- Email ---
+@app.route("/api/email/send", methods=["POST"])
+def api_email_send():
+    data = request.json
+    listener = get_listener()
+    result = listener.send_email(data.get("to"), data.get("subject"), data.get("body"), data.get("cc"), data.get("attachments"))
+    return jsonify(result)
 
-@app.route("/<path:path>")
-def static_proxy(path): return send_from_directory("ui", path)
+@app.route("/api/email/inbox")
+def api_email_inbox():
+    limit = request.args.get("limit", 20, type=int)
+    return jsonify({"emails": get_listener().fetch_recent(limit)})
 
+@app.route("/api/email/configure", methods=["POST"])
+def api_configure_email():
+    data = request.json()
+    result = configure_gmail(data.get("username"), data.get("password"), data.get("poll_interval", 60))
+    return jsonify(result)
+
+@app.route("/api/email/rules", methods=["POST"])
+def api_email_rule():
+    data = request.json
+    listener = get_listener()
+    listener.add_rule(data.get("from"), data.get("subject_contains"), data.get("body_contains"), data.get("action"), data.get("action_data"))
+    return jsonify({"rule_added": True})
+
+# --- Cloud ---
+@app.route("/api/cloud/providers")
+def api_cloud_providers():
+    return jsonify({"providers": ["dropbox", "onedrive", "google_drive"]})
+
+@app.route("/api/cloud/configure", methods=["POST"])
+def api_cloud_configure():
+    data = request.json
+    cloud = get_cloud(data.get("provider", "dropbox"))
+    cloud.configure(data.get("token"), data.get("client_id"), data.get("client_secret"))
+    return jsonify({"configured": True})
+
+@app.route("/api/cloud/upload", methods=["POST"])
+def api_cloud_upload():
+    data = request.json
+    cloud = get_cloud(data.get("provider", "dropbox"))
+    result = cloud.upload(data.get("local_path"), data.get("remote_path"))
+    return jsonify(result)
+
+@app.route("/api/cloud/list", methods=["GET"])
+def api_cloud_list():
+    provider = request.args.get("provider", "dropbox")
+    path = request.args.get("path", "")
+    cloud = get_cloud(provider)
+    return jsonify({"files": cloud.list_files(path)})
+
+# --- UI ---
 @app.route("/")
-def index(): return send_from_directory("ui", "index.html")
+def index():
+    return send_from_directory("ui", "index.html")
+
+@app.route("/assets/<path:path>")
+def assets(path):
+    return send_from_directory("ui", f"assets/{path}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3132))
