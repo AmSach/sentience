@@ -1,0 +1,8 @@
+PySide6>=6.6
+requests>=2.31
+python-dotenv>=1.0
+playwright>=1.40
+aiohttp>=3.9
+SpeechRecognition>=3.10
+pyttsx3>=2.90
+pyaudio>=0.2.14
