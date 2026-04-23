@@ -1,23 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
-
-datas = []
-binaries = []
-hiddenimports = ['anthropic', 'openai', 'groq', 'flask', 'flask_cors', 'werkzeug', 'playwright', 'paramiko', 'lz4']
-tmp_ret = collect_all('anthropic')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('openai')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('groq')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['sentience_core.py'],
+    ['sentience_app.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=[],
+    datas=[('ui', 'ui')],
+    hiddenimports=['anthropic', 'openai', 'groq', 'flask', 'flask_cors', 'paramiko'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

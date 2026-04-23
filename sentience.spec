@@ -1,63 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
-
-block_cipher = None
-
-datas_pyside = collect_data_files('PySide6')
-datas_shiboken = collect_data_files('shiboken6')
+from PyInstaller.utils.hooks import collect_all
+from PyInstaller.building.build_main import Analysis, PYZ, EXE
 
 a = Analysis(
-    ['sentience.py'],
+    ['sentience_app.py'],
     pathex=[],
     binaries=[],
-    datas=datas_pyside + datas_shiboken + [
-        ('ui', 'ui'),
-    ],
-    hiddenimports=[
-        'anthropic',
-        'openai', 
-        'groq',
-        'dotenv',
-        'lz4', 'lz4.frame',
-        'yaml',
-        'playwright', 'playwright.sync_api',
-        'flask', 'flask_cors', 'werkzeug',
-        'sqlite3', 'json', 'uuid', 'hashlib',
-        'urllib', 'urllib.request', 'urllib.error',
-        'http', 'http.client',
-        'concurrent', 'concurrent.futures',
-        'threading', 'multiprocessing',
-    ],
+    datas=collect_all('PySide6')[1] + [('ui', 'ui')],
+    hiddenimports=['anthropic', 'openai', 'groq', 'flask', 'flask_cors', 'paramiko', 'pytesseract', 'whisper', 'PyPDF2', 'docx', 'openpyxl', 'reportlab', 'lark', 'duckduckgo_search'],
     hookspath=[],
     hooksconfig={},
-    key=block_cipher,
-    noarchive=False,
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=None,
 )
-
-pyz = PYZ(a.pure, a.zir_data, cipher=block_cipher, hook_menu=None)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='Sentience',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    entitlements_file=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zip SafeFileCollection(a.datas, a.zipSafe),
-    strip=False,
-    upx=True,
-    name='Sentience',
-)
+pyz = PYZ(a.pyz, cipher=None)
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='Sentience', debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=False)
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=True, name='Sentience')
