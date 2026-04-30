@@ -4,6 +4,7 @@ setup(
     name="sentience",
     version="2.0.0",
     packages=find_packages(),
+    py_modules=["cli", "spawn_agents", "__main__"],  # Root-level .py files
     install_requires=[
         "flask>=3.0.0",
         "flask-cors>=4.0.0",
@@ -28,7 +29,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "sentience=sentience.cli:main",
+            "sentience=cli:main",  # FIXED: cli is at root, not in sentience/ package
         ],
     },
 )
